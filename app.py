@@ -1,17 +1,15 @@
-from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI
 from pydantic import BaseModel
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf  # ✅ use tf instead of tflite_runtime
 from mangum import Mangum
-import os
 
 app = FastAPI()
 
-# Set up Jinja2 templates
-templates = Jinja2Templates(directory="templates")
+# Root route to verify app is live
+@app.get("/")
+def read_root():
+    return {"message": "MLP Credit Card Fraud Detection API is Live!"}
 
 # Load TFLite model
 interpreter = tf.lite.Interpreter(model_path="mlp_model.tflite")
@@ -19,25 +17,19 @@ interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
-@app.get("/", response_class=HTMLResponse)
-def read_form(request: Request):
-    return templates.TemplateResponse("form.html", {"request": request})
+class Transaction(BaseModel):
+    features: list
 
-@app.post("/predict", response_class=HTMLResponse)
-async def predict(request: Request, **kwargs):
-    # Extract features from form submission
-    features = [float(kwargs[f"f{i}"]) for i in range(30)]  # assuming 30 features
-    input_data = np.array([features], dtype=np.float32)
-
+@app.post("/predict")
+def predict(data: Transaction):
+    input_data = np.array([data.features], dtype=np.float32)
     interpreter.set_tensor(input_details[0]['index'], input_data)
     interpreter.invoke()
     prediction = interpreter.get_tensor(output_details[0]['index'])[0][0]
-    label = 1 if prediction >= 0.5 else 0
-
-    return templates.TemplateResponse("form.html", {
-        "request": request,
-        "prediction": f"{prediction:.2f}",
-        "label": "Fraud" if label == 1 else "Not Fraud"
-    })
+    prediction_class = int(prediction > 0.5)  # threshold can be changed if needed
+    return {
+        "fraud_probability": float(prediction),
+        "fraud_label": prediction_class  # 1 = Fraud, 0 = Not Fraud
+    }
 
 lambda_handler = Mangum(app)
